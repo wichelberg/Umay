@@ -84,3 +84,7 @@ sounds/Umay/
 # Reference video (someone else's), not used by the code
 UI/
 *.mp4
+
+# Agent instructions and internal docs (kept local)
+CLAUDE.md
+docs/
