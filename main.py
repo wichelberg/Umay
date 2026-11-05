@@ -28,6 +28,7 @@ import hud_feeds
 import i18n
 import local_llm
 import pc_tools
+import price_alerts
 import router
 import system_tools
 import telegram_listener
@@ -140,6 +141,14 @@ def _rings_on(day):
     return [(r["at"], r["name"]) for r in hud_data.read_alarms(day.year, day.month)["by_day"].get(day.day, [])]
 
 
+def _price_alarm(text, level="important"):
+    """A price alarm fired (price_alerts.py): the companion tells it the way it tells things (aloud / written /
+    Telegram when away; "urgent", a move far bigger than expected: a WhatsApp call when away); with the
+    companion off, Telegram."""
+    if not companion.tell(text, level=level, kind="markets"):
+        pc_tools.fallback_notify(text)
+
+
 def _start_companion():
     """Umay on her own initiative (companion.py): what she needs from the rest of her."""
     companion.start({
@@ -206,6 +215,7 @@ def main():
     conversation_memory.start(ai_assistant.CHAT_LOG_DIR,
                               can_run=lambda: not voice.gaming["on"] and not local_llm.busy())
     _start_companion()
+    price_alerts.start(_price_alarm)
 
     root = tk.Tk()
     root.withdraw()

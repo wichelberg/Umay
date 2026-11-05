@@ -32,6 +32,7 @@ import markets_follow
 import media_tools
 import news_follow
 import pc_tools
+import price_alerts
 import reminder_tools
 import router
 import screen_tools
@@ -248,6 +249,7 @@ TOOLS = [
 ] + (pc_tools.TOOLS + browser_tools.TOOLS + system_tools.TOOLS + steam_tools.TOOLS
      + screen_tools.TOOLS + input_tools.TOOLS + eyes.TOOLS + face.TOOLS + claude_terminal.TOOLS + calls.TOOLS + media_tools.TOOLS + spotify_tools.TOOLS + reminder_tools.TOOLS + calendar_tools.TOOLS + whatsapp_tools.TOOLS
      + web_control.TOOLS + web_find.TOOLS + sleep_mode.TOOLS + news_follow.TOOLS + markets_follow.TOOLS + market_outlook.TOOLS
+     + price_alerts.TOOLS
      + day_plan.TOOLS)
 
 TOOL_FUNCTIONS = {
@@ -274,6 +276,7 @@ TOOL_FUNCTIONS = {
     **news_follow.TOOL_FUNCTIONS,
     **markets_follow.TOOL_FUNCTIONS,
     **market_outlook.TOOL_FUNCTIONS,
+    **price_alerts.TOOL_FUNCTIONS,
     **day_plan.TOOL_FUNCTIONS,
 }
 
@@ -567,6 +570,12 @@ def _send_message(chat, user_text, source="other"):
         input_tools.new_turn()
         _, answer = input_tools.move_to_monitor(monitor)
         answer = answer.rstrip(".") + ", dear."
+        messages.append({"role": "assistant", "content": answer})
+        return answer
+    alarm = price_alerts.asked(user_text)
+    answer = price_alerts.shortcut(alarm) if alarm else None
+    if answer is not None:  # "BTC 80 bini geçerse haber ver": the 4b model mixed up "80 bin" and the direction
+        credit_log.note_tool("price_alert")
         messages.append({"role": "assistant", "content": answer})
         return answer
     # "add Apple to the markets", then "follow Nvidia in the news" (whose "unfollow X" needs no "news"): the same

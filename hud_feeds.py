@@ -296,15 +296,22 @@ def parse_spark(data, symbols, now=None):
     return out
 
 
+def read_quotes(symbols):
+    """Quotes for any symbols (parse_spark's shape), on the panel or not (price_alerts.py)."""
+    if not symbols:
+        return []
+    r = requests.get("https://query1.finance.yahoo.com/v8/finance/spark", headers=HEADERS, timeout=TIMEOUT,
+                     params={"symbols": ",".join(symbols), "range": "1d", "interval": "5m"})
+    r.raise_for_status()
+    return parse_spark(r.json(), symbols)
+
+
 def read_markets():
     """Every market symbol: price, change since the last close and today's curve (5 min bars)."""
     symbols = market_symbols()
     if not symbols:
         return {"quotes": [], "missing": [], "at": time.time()}
-    r = requests.get("https://query1.finance.yahoo.com/v8/finance/spark", headers=HEADERS, timeout=TIMEOUT,
-                     params={"symbols": ",".join(symbols), "range": "1d", "interval": "5m"})
-    r.raise_for_status()
-    quotes = parse_spark(r.json(), symbols)
+    quotes = read_quotes(symbols)
     if not quotes:
         raise ValueError("Yahoo knew none of the market symbols")
     return {"quotes": quotes, "missing": [s for s in symbols if s not in {q["symbol"] for q in quotes}],

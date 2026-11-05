@@ -72,8 +72,8 @@ CATEGORIES = {
                  "whatsapp message messages chat chats v:send v:text"),
     "sleep": (["start_sleep_mode"], "sleep_mode"),
     "news": (["follow_news"], "news newsfeed v:follow v:unfollow"),
-    "markets": (["follow_market", "market_outlook"], "stock stocks market markets crypto bitcoin currency shares "
-                                                     "v:follow v:unfollow"),
+    "markets": (["follow_market", "market_outlook", "price_alert"],
+                "stock stocks market markets crypto bitcoin currency shares price alarm alert v:follow v:unfollow"),
     "plan": (["plan_day"], "plan todo task tasks done"),
 }
 SLOT_CATS = {"youtube", "app_launch", "app_close", "files", "web", "memory", "whatsapp", "news", "markets", "plan",
