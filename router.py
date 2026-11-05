@@ -38,8 +38,9 @@ CATEGORIES = {
                                "v:increase v:decrease v:lower v:raise loud quiet"),
     "video": (["control_video"], "video videos v:loop v:repeat fullscreen v:mute v:unmute"),
     "youtube": (["search_youtube", "open_youtube_result"], "youtube v:play v:watch v:search video videos channel"),
-    "browser": (["open_in_browser", "web_tabs", "web_read_page", "web_act"],
-                "browser tab tabs website site page link url v:read v:download v:upload"),
+    "browser": (["open_in_browser", "web_tabs", "web_read_page", "web_act", "web_browser_data", "web_find_in_site"],
+                "browser tab tabs website site page link url bookmark bookmarks history v:read v:download v:upload "
+                "v:scroll v:zoom v:pin"),
     "web": (["web_search"], "v:search v:google weather forecast news price v:find"),
     "memory": (["search_memory"], "v:remember earlier conversation"),
     "app_launch": (["find_applications", "launch_application"],

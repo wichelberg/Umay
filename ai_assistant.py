@@ -41,6 +41,7 @@ import steam_tools
 import system_tools
 import voice_confirm
 import web_control
+import web_find
 import whatsapp_tools
 
 AI_NAME = "Umay"
@@ -101,7 +102,9 @@ TOOL_HINTS = (
     "return. No emoji. Use the mouse and keyboard (click, scroll, type_text, press_keys) only when no other "
     "tool can do the task: look_at_screen first, then one step at a time, calling the next tool right away "
     "without describing it first; answer only when the task is done or you are stuck. To work on another "
-    "monitor (or when asked to move the cursor there), call move_mouse first."
+    "monitor (or when asked to move the cursor there), call move_mouse first. To find a page inside a website "
+    "(a course, a setting, a product) use web_find_in_site; for Opera GX itself the web_* tools come before "
+    "the mouse and keyboard."
 )
 
 # The small local model, partway through a task on the screen, often answers "Let me click the field..."
@@ -244,7 +247,7 @@ TOOLS = [
     },
 ] + (pc_tools.TOOLS + browser_tools.TOOLS + system_tools.TOOLS + steam_tools.TOOLS
      + screen_tools.TOOLS + input_tools.TOOLS + eyes.TOOLS + face.TOOLS + claude_terminal.TOOLS + calls.TOOLS + media_tools.TOOLS + spotify_tools.TOOLS + reminder_tools.TOOLS + calendar_tools.TOOLS + whatsapp_tools.TOOLS
-     + web_control.TOOLS + sleep_mode.TOOLS + news_follow.TOOLS + markets_follow.TOOLS + market_outlook.TOOLS
+     + web_control.TOOLS + web_find.TOOLS + sleep_mode.TOOLS + news_follow.TOOLS + markets_follow.TOOLS + market_outlook.TOOLS
      + day_plan.TOOLS)
 
 TOOL_FUNCTIONS = {
@@ -266,6 +269,7 @@ TOOL_FUNCTIONS = {
     **calendar_tools.TOOL_FUNCTIONS,
     **whatsapp_tools.TOOL_FUNCTIONS,
     **web_control.TOOL_FUNCTIONS,
+    **web_find.TOOL_FUNCTIONS,
     **sleep_mode.TOOL_FUNCTIONS,
     **news_follow.TOOL_FUNCTIONS,
     **markets_follow.TOOL_FUNCTIONS,
@@ -275,7 +279,13 @@ TOOL_FUNCTIONS = {
 
 
 # While these run the HUD's orb shows "researching"; while any other tool runs, "working".
-RESEARCH_TOOLS = {"web_search", "web_read_page", "search_youtube", "search_memory"}
+RESEARCH_TOOLS = {"web_search", "web_read_page", "search_youtube", "search_memory", "web_find_in_site",
+                  "web_browser_data"}
+# Their results come from outside (web pages, search results, other people's messages): after one of them,
+# every confirm in that request carries a warning and every screen step asks (plan 20b, strict mode;
+# pc_tools.mark_untrusted). web_control's tools also mark it themselves, with the links they saw.
+UNTRUSTED_TOOLS = {"web_search", "web_read_page", "web_act", "web_tabs", "web_find_in_site", "web_browser_data",
+                   "search_youtube", "whatsapp_messages", "whatsapp_chats"}
 
 
 def _ask_confirmation(key, **kwargs):
@@ -479,6 +489,20 @@ def _summarize(mode, messages):
     return (data["choices"][0]["message"].get("content") or "").strip()
 
 
+def ask_plain(prompt, timeout=90):
+    """One question to Umay's model, no tools and no history (web_find picks its next step with it)."""
+    mode = MODES["umay"]
+    response = _post(mode, {"model": mode["model"], "messages": [{"role": "user", "content": prompt}],
+                            **_request_extras(mode)}, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    credit_log.record(mode["model"], data.get("usage"))
+    return (data["choices"][0]["message"].get("content") or "").strip()
+
+
+web_find.ask_model = ask_plain
+
+
 def _compact(mode, messages):
     """Replaces (in place) everything before the current turn with a short summary of it, an earlier summary
     included. False when there is nothing left to summarize or the summary fails."""
@@ -523,6 +547,7 @@ def _send_message(chat, user_text, source="other"):
     the images are shown to the model in a message right after the tool results."""
     messages = chat["messages"]
     messages.append({"role": "user", "content": user_text})
+    pc_tools.new_request()  # strict mode (plan 20b) starts over: nothing untrusted read yet
     look = eyes.command(user_text, max_words=6)
     if look:  # "eyes on / off": no model needed, and the small one might not call it right
         answer = eyes.switch(look)
@@ -595,6 +620,8 @@ def _send_message(chat, user_text, source="other"):
                     result = func(**args) if func else i18n.get(_language, "unknown_tool", name=fn_info["name"])
                 except Exception as e:
                     result = i18n.get(_language, "tool_error", error=e)
+                if fn_info["name"] in UNTRUSTED_TOOLS:
+                    pc_tools.mark_untrusted()
                 if isinstance(result, dict) and ("image" in result or "images" in result):
                     images += result.get("images") or [result["image"]]
                     result = result["text"]

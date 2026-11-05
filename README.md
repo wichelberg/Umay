@@ -11,7 +11,7 @@ Umay speaks English. Her replies come from a local model on this PC (Qwen 3.5 4B
 | Files | List, search, read, create, write, move and delete (to the Recycle Bin) files in the allowed folders, open them with their default app; tidy Downloads into Images / Documents / Code / ... subfolders with one confirmation (nothing deleted or overwritten) |
 | Apps & games | Find and launch installed apps and Steam games; list open apps and close them (normally or forced); list running processes and end one by PID, like Task Manager |
 | Browser | Open sites in Opera GX (new tab, or starts Opera), find a site by name via web search, search YouTube and open a result by number |
-| Web control | With the Umay Web Control extension: list, open, close and switch Opera GX tabs, read a page, click, type, download (with Opera's own logins) and upload a file from the PC. Every step, reading included, is asked first on the PC and on Telegram at once; the first answer counts. The video in a tab (loop on/off, its own volume in percent, mute) goes through it too, without asking, and the answer says the video's state; fullscreen is YouTube's own `f` key. If Opera can't run the extension (not loaded, its folder moved, an old copy, not connecting), she tells you on the PC and on Telegram |
+| Web control | With the Umay Web Control extension: Opera GX tabs (list, open, close, switch, back / forward / reload, zoom, pin, mute, duplicate, reopen the closed one, a new window), read a page part by part (also inside web components, like Brightspace's), find text on it, scroll, hover, click, type, pick options, tick boxes, fill several fields with one question, download (with Opera's own logins) and upload a file from the PC; search your bookmarks, history and downloads. Reading and moving around aren't asked; typing, buttons, downloads, uploads and closing a tab are asked where you asked from; password / card fields, buttons that send, pay, buy or delete, and account / payment pages are asked with a warning and the whole text. After she reads a page (or search results, or a message) the rest of that request is in strict mode: every question carries a warning, every mouse / keyboard step on the screen asks, and an address she made up herself is asked before it opens. "Find my Quantitative Data Analysis course on Brightspace": she walks the site herself in your Opera (links, menus, its own search; at most 30 pages / 5 minutes), leaves the page in front (and sends a screenshot on Telegram), and stops at a login, a CAPTCHA or a payment page. The video in a tab (loop on/off, its own volume in percent, mute) goes through it too, without asking, and the answer says the video's state; fullscreen is YouTube's own `f` key. If Opera can't run the extension (not loaded, its folder moved, an old copy, not connecting), she tells you on the PC and on Telegram |
 | Media | Play/pause/next via media keys (works for YouTube, Spotify, ...), set the system volume |
 | Spotify | What's playing (song, artist, position), play/pause/next/previous checked, shuffle, repeat, seek, Spotify's own volume; opens Spotify to play (Windows' media session, no account). With SPOTIFY_CLIENT_ID (Web API): play a song / artist / album / playlist by name, your own playlists and liked songs, queue, like, add to a playlist, play on another device |
 | Python & dev | Run a `.py` file in the background (uses the project's virtualenv if there is one) and report the output when it finishes, optionally in a visible window; open a terminal or a folder in VS Code |
@@ -48,8 +48,8 @@ Umay speaks English. Her replies come from a local model on this PC (Qwen 3.5 4B
 - Optional, for browser control and the video in a tab (loop, volume, mute): load the Umay Web
   Control extension (its own project, `Documents\Projects\Web_ControlExtention`) in Opera GX once
   (`opera://extensions` → Developer mode → Load unpacked). The extension connects to Umay on
-  `127.0.0.1:47821`; she only accepts that extension, and asks you before every step (except the video
-  controls). Opera loads an unpacked extension from its folder every time: if the folder moves, remove
+  `127.0.0.1:47821`; she only accepts that extension, and asks you before typing, sending and downloads
+  (see Web control above). Opera loads an unpacked extension from its folder every time: if the folder moves, remove
   the extension in `opera://extensions` and load it from the new place (Umay notices and tells you).
   After updating its files, press the reload button on its card (she tells you if Opera runs an old copy).
 
@@ -347,15 +347,16 @@ comments. The most useful ones:
 ## Safety
 
 - File tools only work inside `UMAY_ALLOWED_DIRS`; deleted files go to the Recycle Bin
-  (uninstalling a Steam game is permanent).
-- Creating, changing, moving, deleting, running, closing, uninstalling and shutting down are
+  (uninstalling a Steam game is permanent).- Creating, changing, moving, deleting, running, closing, uninstalling and shutting down are
   always confirmed (aloud on the PC, buttons on Telegram).
 - Shutdowns are forced (unsaved work is lost) and always preceded by a 60-second warning that
   `/iptal` or "cancel the shutdown" stops.
 - Screenshots are sent to the model only when she uses `look_at_screen` (or after a mouse or keyboard
   step), and dropped from the conversation right after; during a task only the newest one is kept.
 - Mouse and keyboard: she asks only before a step that sends, posts, buys, deletes or can't be undone
-  (where you asked from: buttons on Telegram, aloud at the PC); other steps go ahead without asking.
+  (where you asked from: buttons on Telegram, aloud at the PC); other steps go ahead without asking,
+  except after she read a web page, search results or a message in that request: then every click,
+  typing and key press asks (strict mode).
   Moving the mouse yourself stops her for the rest of that request. She never types into her own
   text box and only types after clicking where the text goes; she is told never to type passwords.
 - `/c` runs Claude Code in `acceptEdits` mode: it can edit files but can't run shell commands
@@ -401,7 +402,8 @@ How the code fits together, how to add a tool, build and deploy, and known traps
 | `health_monitor.py` | Background health checks, alarms and their escalation |
 | `steam_tools.py` | Installed Steam games |
 | `whatsapp_tools.py` | WhatsApp Desktop: chat list, reading messages (UI Automation), sending files |
-| `web_control.py` | Opera GX through the Umay Web Control extension |
+| `web_control.py` | Opera GX through the Umay Web Control extension, its approval tiers |
+| `web_find.py` | Finding a page inside a website by walking it in Opera GX |
 | `sleep_mode.py`, `sleep_hook.ps1` | Sleep mode: backups, the unattended Claude Code job, report, shutdown. `python sleep_mode.py start/finish` runs the same mode inside an interactive Claude Code session (with the global hook `~/.claude/hooks/umay_sleep_gate.py`) |
 | `screen_tools.py`, `media_tools.py` | Screenshots; media keys and volume |
 | `spotify_tools.py` | Spotify through Windows' media session (winrt) and its mixer volume (pycaw) |

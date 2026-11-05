@@ -73,8 +73,38 @@ def current_photo_sender():
     return getattr(_local, "photo", None)
 
 
+def new_request():
+    """A new request from the owner (ai_assistant._send_message): nothing untrusted read yet."""
+    _local.request = {"untrusted": False, "urls": set()}
+
+
+def request_state():
+    """This thread's request: {"untrusted": bool, "urls": addresses seen in what was read}."""
+    state = getattr(_local, "request", None)
+    if state is None:
+        new_request()
+        state = _local.request
+    return state
+
+
+def mark_untrusted(urls=()):
+    """Something from outside (a web page, search results, WhatsApp text) was read in this request. Until
+    the next request, every confirm says so first (plan 20b, strict mode: a small model can be talked into
+    things by a page, so the owner sees the warning before saying yes). urls: links seen in it."""
+    state = request_state()
+    state["untrusted"] = True
+    state["urls"].update(u for u in urls if u)
+
+
+def untrusted():
+    return request_state()["untrusted"]
+
+
 def confirm(key, **kwargs):
     handler = getattr(_local, "confirm", None) or confirm_handler
+    if untrusted():
+        keys = [key] if isinstance(key, str) else list(key)
+        key = ["confirm_untrusted_note"] + keys
     return handler(key, **kwargs)
 
 

@@ -8,6 +8,9 @@ Safety:
 - Only a step that sends, posts, buys, deletes or can't be undone asks the user first (`irreversible`),
   where the request came from: buttons on Telegram, aloud at the PC. The rest goes ahead without asking
   (the owner's choice, 2026-11-02: until then the first action of every request asked too).
+  Strict mode (plan 20b, the owner's choice 2026-11-05): once something untrusted was read in the request
+  (a web page, search results, WhatsApp text; pc_tools.untrusted), every click, typing and key press asks,
+  showing what it does. Scrolling never asks.
 - The user moving the mouse stops her: the pointer isn't where she left it, so the rest of that
   request's actions are refused.
 - Typing is refused until she clicked (or pressed keys) in this request, and into Umay's own text box
@@ -195,15 +198,29 @@ def _umay_has_focus():
     return pid.value == os.getpid()
 
 
-def _start(irreversible=""):
-    """None when the action may go ahead, else why not (for the model)."""
+def _stopped():
+    """Why not, if the user took over the mouse; else None."""
     if _turn["stopped"] or taken_over(_turn["cursor"], _cursor()):
         _turn["stopped"] = True
         return ("Stopped: the user moved the mouse, so they are using the PC. Don't use the mouse or keyboard "
                 "again for this request; tell them where you got to.")
-    if irreversible.strip() and not pc_tools.confirm("confirm_control_step", step=irreversible.strip()):
+    return None
+
+
+def _allowed(irreversible="", step=""):
+    """None when the step may go ahead, else why not. A step the model calls irreversible asks; after
+    something untrusted was read in this request (a web page, WhatsApp text: pc_tools.untrusted) every
+    click, typing and key press asks, showing what it does (plan 20b: the model's own `irreversible`
+    can't be trusted then, a page may have told it what to do)."""
+    what = irreversible.strip() or (step if pc_tools.untrusted() else "")
+    if what and not pc_tools.confirm("confirm_control_step", step=what):
         return pc_tools._declined()
     return None
+
+
+def _start(irreversible="", step=""):
+    """None when the action may go ahead, else why not (for the model)."""
+    return _stopped() or _allowed(irreversible, step)
 
 
 def steps_text(steps):
@@ -231,11 +248,15 @@ def click(x: float, y: float, button: str = "left", double: bool = False, irreve
         at = screen_tools.to_screen(x, y)
         if at is None:
             return _need_view()
-        why = _start(irreversible)
+        why = _stopped()
         if why:
             return why
         _move(*at)
         hit = what_is_at(*at)
+        verb = "double-click" if double else "click"
+        why = _allowed(irreversible, f'{verb} {hit[0]} "{hit[1]}"' if hit and hit[1] else f"{verb} at ({x:.0f}, {y:.0f})")
+        if why:
+            return why
         which = {"right": Button.right, "middle": Button.middle}.get(str(button).lower(), Button.left)
         _mouse.click(which, 2 if double else 1)
         _turn["focused"] = True
@@ -270,7 +291,7 @@ def type_text(text: str, enter: bool = False, irreversible: str = "") -> object:
             return f"That's too long to type ({len(text)} characters, at most {MAX_TEXT})."
         if _umay_has_focus() or not _turn["focused"]:
             return "Click the field to type into first (with click), then type."
-        why = _start(irreversible)
+        why = _start(irreversible, f'type "{text}"' + (" + Enter" if enter else ""))
         if why:
             return why
         _keyboard.type(text)
@@ -290,7 +311,7 @@ def press_keys(keys: str, irreversible: str = "") -> object:
             return str(e)
         if _umay_has_focus():
             return "Umay's own text box has the keyboard focus: click the window the keys are for first."
-        why = _start(irreversible)
+        why = _start(irreversible, f"press {keys}")
         if why:
             return why
         for k in combo:
