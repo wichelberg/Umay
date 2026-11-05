@@ -397,7 +397,14 @@ def web_tabs(action: str, tab_id: int = None, url: str = "", percent: int = None
                          "reload": ("reload", {}), "pin": ("pin", {"on": True}), "unpin": ("pin", {"on": False}),
                          "mute": ("muteTab", {"on": True}), "unmute": ("muteTab", {"on": False}),
                          "duplicate": ("duplicate", {})}[action]
-        now = _call(command, tab=tab["id"], **args)
+        try:
+            now = _call(command, tab=tab["id"], **args)
+        except ToolError as e:
+            if action not in ("back", "forward") or "history" not in str(e).lower():
+                raise
+            # Chrome skips history entries a script's click made (her own link clicks): the page's history works
+            _page(tab, "historyGo", -1 if action == "back" else 1)
+            now = _call("settle", tab=tab["id"], timeout=8)
         _forget(tab["id"])
         _seen([now.get("url")])
         done = {"switch": "Switched to", "back": "Went back:", "forward": "Went forward:", "reload": "Reloaded",
@@ -432,6 +439,8 @@ def web_read_page(tab_id: int = None, part: int = 1) -> str:
         tab = _tab(tab_id)
         page = read(tab, part)
         n, parts = page.get("part", 1), page.get("parts", 1)
+        if n > parts:
+            return f"Tab [{tab['id']}] has only {parts} part{'s' if parts > 1 else ''}: read part=1 to {parts}."
         where = f" (part {n} of {parts}; part={n + 1} reads on)" if parts > 1 and n < parts else \
             (f" (part {n} of {parts}, the last)" if parts > 1 else "")
         more = f"\n(+{page['skipped']} more elements in the next parts)" if page.get("skipped") else ""
