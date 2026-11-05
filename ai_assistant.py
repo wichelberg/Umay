@@ -24,6 +24,7 @@ import calls
 import claude_terminal
 import eyes
 import face
+import heavy_model
 import hud
 import input_tools
 import local_llm
@@ -40,6 +41,7 @@ import sleep_mode
 import spotify_tools
 import steam_tools
 import system_tools
+import task_plan
 import voice_confirm
 import web_control
 import web_find
@@ -52,6 +54,7 @@ CHAT_LOG_DIR = paths.app_dir() / "chat_logs"
 CHAT_LOG_DIR.mkdir(exist_ok=True)
 
 MAX_TOOL_ROUNDS = 40  # a task done with the mouse and keyboard takes a round per click
+STEP_ROUNDS = 12      # one step of a plan (task_plan)
 CONFIRM_TIMEOUT_SECONDS = 300
 
 
@@ -372,8 +375,8 @@ def _system_prompt(mode):
     return f"{mode['system']}\n\n{clock}\n{LANGUAGE_RULE}" if mode["system"] else f"{clock}\n{LANGUAGE_RULE}"
 
 
-def _tools(mode):
-    return TOOLS
+def _tools(mode, tools=None):
+    return TOOLS if tools is None else tools
 
 
 def _headers(mode):
@@ -411,12 +414,14 @@ def _with_reminder(mode, messages):
         + messages[last + 1:]
 
 
-def _openai_compat_request(mode, messages):
-    """Returns (content, tool_calls, cost_in_usd) for the next assistant turn."""
+def _openai_compat_request(mode, messages, tools=None):
+    """Returns (content, tool_calls, cost_in_usd) for the next assistant turn. `tools`: the tool schemas the
+    model may use (all of them by default; one step of a plan gets fewer, an answer-only step none)."""
+    schemas = _tools(mode, tools)
     response = _post(mode, {
         "model": mode["model"],
         "messages": [{"role": "system", "content": _system_prompt(mode)}] + _with_reminder(mode, messages),
-        "tools": _tools(mode),
+        **({"tools": schemas} if schemas else {}),
         **_request_extras(mode),
     }, timeout=60)
     response.raise_for_status()
@@ -524,12 +529,12 @@ def _compact(mode, messages):
     return True
 
 
-def _request_fitting(mode, messages):
+def _request_fitting(mode, messages, tools=None):
     """The next assistant turn. When the history doesn't fit the model's context, what came before the current
     turn becomes a short summary; if that still doesn't fit (or can't be made), the oldest turns go."""
     while True:
         try:
-            return _call_with_retry(lambda: _openai_compat_request(mode, messages))
+            return _call_with_retry(lambda: _openai_compat_request(mode, messages, tools))
         except requests.exceptions.HTTPError as e:
             if not _too_long(e) or not (_compact(mode, messages) or _drop_oldest_turn(messages)):
                 raise
@@ -593,65 +598,181 @@ def _send_message(chat, user_text, source="other"):
         messages.append({"role": "assistant", "content": answer})
         return answer
     # Shadow only (router.py): what layer 1 would have done is logged next to what the model does; nothing runs.
-    plan = router.route(user_text)
+    route = router.route(user_text)
     called, started, answer = [], time.monotonic(), ""
     input_tools.new_turn()
-    on_screen, nudges = False, 0
-    cost = 0.0
+    heavy_model.new_request()  # its call budget (plan 21) starts over
+    run = {"cost": 0.0}
     before = hud.current()  # the box, a spoken turn or nothing (Telegram): back to it at the end
     try:
-        for _ in range(MAX_TOOL_ROUNDS):
-            mode = MODES[chat["mode"]]
-            content, tool_calls, round_cost = _request_fitting(mode, messages)
-            cost += round_cost
-
-            if not tool_calls:
-                messages.append({"role": "assistant", "content": content})
-                if on_screen and nudges < NUDGES and ANNOUNCES_STEP.search(content[-200:]):
-                    nudges += 1
-                    messages.append({"role": "user", "content": GO_ON})
-                    continue
-                answer = content
-                return content
-
-            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
-            images = []
-            names = {tc["function"]["name"] for tc in tool_calls}
-            on_screen = on_screen or bool(names & SCREEN_TOOLS)
-            hud.activity("research" if names & RESEARCH_TOOLS else "work")
-            for tc in tool_calls:
-                fn_info = tc["function"]
-                credit_log.note_tool(fn_info["name"])
-                func = TOOL_FUNCTIONS.get(fn_info["name"])
-                try:
-                    args = json.loads(fn_info.get("arguments") or "{}")
-                    called.append((fn_info["name"], args))
-                    result = func(**args) if func else i18n.get(_language, "unknown_tool", name=fn_info["name"])
-                except Exception as e:
-                    result = i18n.get(_language, "tool_error", error=e)
-                if fn_info["name"] in UNTRUSTED_TOOLS:
-                    pc_tools.mark_untrusted()
-                if isinstance(result, dict) and ("image" in result or "images" in result):
-                    images += result.get("images") or [result["image"]]
-                    result = result["text"]
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(result)})
-            hud.activity("think")
-            if images:
-                _drop_images(messages)  # only the newest screenshot: a task with many clicks fills the context
-                messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": "[Screenshot taken by look_at_screen]"}]
-                    + [{"type": "image_url", "image_url": {"url": url}} for url in images],
-                })
-
-        return i18n.get(_language, "too_many_tool_calls")
+        planned = _planned(chat, user_text, source, called, run)
+        if planned is not None:  # a multi-step request, done as a plan (task_plan)
+            answer = planned
+            messages.append({"role": "assistant", "content": answer})
+            return answer
+        content = _tool_loop(MODES[chat["mode"]], messages, MAX_TOOL_ROUNDS, called, run)
+        if content is None:
+            return i18n.get(_language, "too_many_tool_calls")
+        answer = content
+        return content
     finally:
         if hud.current() in ("research", "work", "think") and before not in ("research", "work"):
             hud.activity(before)
         _drop_images(messages)
-        if cost:
-            _message_costs.append(cost)
-        router.log(plan, source, called, time.monotonic() - started, answer)
+        if run["cost"]:
+            _message_costs.append(run["cost"])
+        router.log(route, source, called, time.monotonic() - started, answer)
+
+
+def _tool_loop(mode, messages, rounds, called, run, tools=None):
+    """Model turns and their tool calls until the model answers without one; returns that answer, or None when
+    `rounds` ran out. `tools`: the tool schemas it may use (all by default); a call to any other is refused.
+    Appends to `messages` and `called` in place and adds the cost to run["cost"]."""
+    allowed = None if tools is None else {t["function"]["name"] for t in tools}
+    on_screen, nudges = False, 0
+    for _ in range(rounds):
+        content, tool_calls, round_cost = _request_fitting(mode, messages, tools)
+        run["cost"] += round_cost
+
+        if not tool_calls:
+            messages.append({"role": "assistant", "content": content})
+            if on_screen and nudges < NUDGES and ANNOUNCES_STEP.search(content[-200:]):
+                nudges += 1
+                messages.append({"role": "user", "content": GO_ON})
+                continue
+            return content
+
+        messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+        images = []
+        names = {tc["function"]["name"] for tc in tool_calls}
+        on_screen = on_screen or bool(names & SCREEN_TOOLS)
+        hud.activity("research" if names & RESEARCH_TOOLS else "work")
+        for tc in tool_calls:
+            fn_info = tc["function"]
+            credit_log.note_tool(fn_info["name"])
+            func = TOOL_FUNCTIONS.get(fn_info["name"])
+            try:
+                args = json.loads(fn_info.get("arguments") or "{}")
+                called.append((fn_info["name"], args))
+                if allowed is not None and fn_info["name"] not in allowed:
+                    result = (f"{fn_info['name']} isn't one of this step's tools; use these: "
+                              f"{', '.join(sorted(allowed))}.")
+                else:
+                    result = func(**args) if func else i18n.get(_language, "unknown_tool", name=fn_info["name"])
+            except Exception as e:
+                result = i18n.get(_language, "tool_error", error=e)
+            if fn_info["name"] in UNTRUSTED_TOOLS:
+                pc_tools.mark_untrusted()
+            if isinstance(result, dict) and ("image" in result or "images" in result):
+                images += result.get("images") or [result["image"]]
+                result = result["text"]
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(result)})
+        hud.activity("think")
+        if images:
+            _drop_images(messages)  # only the newest screenshot: a task with many clicks fills the context
+            messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": "[Screenshot taken by look_at_screen]"}]
+                + [{"type": "image_url", "image_url": {"url": url}} for url in images],
+            })
+    return None
+
+
+# --- Plans for multi-step requests (plan 21, task_plan) -----------------------------------------
+
+RECENT_CHARS = 1500
+
+
+def _recent_text(chat):
+    """The conversation just before the current message, in short, for the planner (a follow-up like "now send
+    it to Ali" needs it)."""
+    lines = []
+    for m in chat["messages"][:-1][-6:]:
+        content = m.get("content")
+        if isinstance(content, str) and content and content != GO_ON and m["role"] in ("user", "assistant"):
+            lines.append(f"{'Owner' if m['role'] == 'user' else 'Umay'}: {content}")
+    return "\n".join(lines)[-RECENT_CHARS:]
+
+
+def _show(source, text):
+    """A line for the owner while the request still runs: in the text box (box) or on Telegram; a spoken
+    request just goes on (its answer is spoken at the end)."""
+    if source == "box" and chat_box.is_open():
+        chat_box.add(AI_NAME, text, "her")
+    elif source == "telegram":
+        pc_tools.current_notifier()("plan_note", text=text)
+
+
+def _what_was_done(messages):
+    """The tools a step called and the start of what they answered, for the heavy model's fix."""
+    lines = []
+    for m in messages:
+        if m["role"] == "assistant" and m.get("tool_calls"):
+            lines += [f"called {tc['function']['name']}({tc['function'].get('arguments') or ''})"[:300]
+                      for tc in m["tool_calls"]]
+        elif m["role"] == "tool":
+            lines.append(f"  -> {str(m.get('content'))[:300]}")
+    return "\n".join(lines[-16:])
+
+
+def _planned(chat, user_text, source, called, run):
+    """A multi-step request becomes a plan the heavy model writes and the local model does step by step (plan
+    21; the owner's choice 2026-11-05: show the plan and start at once). Returns the answer, or None when
+    the request isn't multi-step or there's no plan (no heavy model, offline): then the usual tool loop
+    answers. When the planner has questions, they are the answer, and the next message is taken as their
+    answer (chat["pending_plan"])."""
+    pending = chat.pop("pending_plan", None)
+    if not heavy_model.on():
+        return None
+    if pending:
+        request = f"{pending}\n(The owner's answer to my questions: {user_text})"
+    elif task_plan.needs_plan(user_text, ask_plain):
+        request = user_text
+    else:
+        return None
+    hud.activity("think")
+    plan = task_plan.make(request, _recent_text(chat), TOOLS, f"{datetime.now():%Y-%m-%d %A %H:%M}")
+    if plan is None:
+        return None
+    if plan["ask_user"]:
+        chat["pending_plan"] = request
+        return i18n.get(_language, "plan_questions", questions="\n".join(f"- {q}" for q in plan["ask_user"]))
+    _show(source, i18n.get(_language, "plan_shown", count=len(plan["steps"]),
+                           steps=task_plan.plan_text(plan["steps"])))
+    return _run_plan(request, plan["steps"], called, run)
+
+
+def _run_plan(request, steps, called, run):
+    """Each step in a fresh conversation with only its tools (task_plan.step_tools). A step that fails gets one
+    new attempt written by the heavy model; if that fails too, or it gives up, the plan stops there."""
+    mode = MODES["umay"]
+    names = [t["function"]["name"] for t in TOOLS]
+    results, retried, answer = [], set(), ""
+    i = 0
+    while i < len(steps):
+        allowed = task_plan.step_tools(steps[i], names, last=i == len(steps) - 1)
+        tools = [t for t in TOOLS if t["function"]["name"] in allowed]
+        messages = [{"role": "user", "content": task_plan.step_prompt(request, steps, i, results)}]
+        before = len(called)
+        answer = _tool_loop(mode, messages, STEP_ROUNDS, called, run, tools)
+        if not task_plan.failed(answer) and task_plan.skipped(steps[i], called[before:]):
+            messages.append({"role": "user", "content": task_plan.not_done(steps[i])})
+            answer = _tool_loop(mode, messages, STEP_ROUNDS, called, run, tools)
+            if task_plan.skipped(steps[i], called[before:]):
+                answer = ""  # still nothing done: a failed step
+        if task_plan.failed(answer):
+            new, why = (None, None) if i in retried else task_plan.fix(
+                request, steps, i, results, answer or _what_was_done(messages), TOOLS)
+            if new is None:
+                return i18n.get(_language, "plan_stopped", step=i + 1, count=len(steps),
+                                why=why or answer or i18n.get(_language, "plan_no_answer"),
+                                done=task_plan.results_text(results))
+            retried.add(i)
+            steps = steps[:i] + [new] + steps[i + 1:]
+            continue
+        results.append(task_plan.short(answer))
+        i += 1
+    return answer
 
 
 # --- OpenRouter credits ---------------------------------------------------------------

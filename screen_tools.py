@@ -174,6 +174,15 @@ def refresh(mark=None):
     return _shots([monitor], mark=mark)
 
 
+def view_jpeg():
+    """A fresh JPEG of what the latest screenshot showed (the same part of the screen, so a point 0..1000 on it
+    is a point on the latest screenshot), or None if that wasn't exactly one image. input_tools.aim sends it to
+    the heavy model."""
+    if _view["count"] != 1 or not _view["rect"]:
+        return None
+    return base64.b64decode(_shots([_view["rect"]])[0].split(",", 1)[1])
+
+
 def look_at_screen(monitor: str = "active", zoom: list = None) -> dict:
     if zoom:
         if _view["count"] != 1:

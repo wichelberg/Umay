@@ -3,6 +3,10 @@ no other tool covers: click, scroll (a web page up or down), type, press keys.
 
 Points are given from 0 to 1000 across the latest screenshot (screen_tools.to_screen). Every action
 answers with a new screenshot of that monitor, so she sees what it did before the next step.
+A click also names its `target` ("the Download button"): the heavy model (heavy_model, plan 21: Claude Code
+Haiku) looks at a fresh copy of that screenshot and gives the point; the local model's own x and y are used
+only when it can't (no heavy model, offline, the request's budget used). If it says the target isn't on the
+screenshot, nothing is clicked.
 
 Safety:
 - Only a step that sends, posts, buys, deletes or can't be undone asks the user first (`irreversible`),
@@ -39,6 +43,7 @@ from pynput.keyboard import Controller as KeyboardController, Key, KeyCode
 from pynput.mouse import Button, Controller as MouseController
 
 import hand_gesture
+import heavy_model
 import pc_tools
 import screen_tools
 
@@ -243,8 +248,46 @@ def _need_view():
     return "Take a screenshot with look_at_screen (one monitor) first: points are given on the latest screenshot."
 
 
-def click(x: float, y: float, button: str = "left", double: bool = False, irreversible: str = "") -> object:
+AIM_PROMPT = ("Read the image file {image}. It is a screenshot of (part of) a Windows PC screen. I want to click "
+              "TARGET. Where exactly should I click? Give x and y from 0 to 1000 across this image (0,0 = "
+              "top-left, 1000,1000 = bottom-right). If it isn't visible in this image, set found to false.")
+AIM_SCHEMA = {"type": "object", "required": ["found", "x", "y"],
+              "properties": {"found": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"}}}
+MISSING = "missing"
+
+
+def aim(target):
+    """Where the heavy model (heavy_model, plan 21) sees `target` on the latest screenshot: (x, y) 0..1000, MISSING
+    if it says it isn't there, or None if it can't tell (no heavy model, offline, budget used): then the local
+    model's own point is used. Measured 2026-11-05: Claude Code Haiku hit 27/29 targets on real screens (2 px
+    median), the local 4b 50/60 on easier drawn ones, missing small boxes and tabs by 16-109 px."""
+    if not heavy_model.on():
+        return None
+    image = screen_tools.view_jpeg()
+    if image is None:
+        return None
+    answer = heavy_model.ask(AIM_PROMPT.replace("TARGET", target), "aim", schema=AIM_SCHEMA, image=image)
+    if not isinstance(answer, dict):
+        return None
+    if answer.get("found") is False:
+        return MISSING
+    try:
+        x, y = float(answer["x"]), float(answer["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (x, y) if 0 <= x <= 1000 and 0 <= y <= 1000 else None
+
+
+def click(x: float, y: float, button: str = "left", double: bool = False, irreversible: str = "",
+          target: str = "") -> object:
     with _lock:
+        target = str(target or "").strip()
+        aimed = aim(target) if target and screen_tools.to_screen(x, y) is not None else None
+        if aimed == MISSING:
+            return (f'A closer look found no {target} on the latest screenshot, so nothing was clicked. Take a new '
+                    "screenshot (scroll or zoom first if it may be out of view) and try again.")
+        if aimed:
+            x, y = aimed
         at = screen_tools.to_screen(x, y)
         if at is None:
             return _need_view()
@@ -432,10 +475,14 @@ TOOLS = [
     _tool("click", "Clicks with the mouse at a point on the latest screenshot." + _NOTE,
           {"x": {"type": "number", "description": f"Horizontal, {_XY}."},
            "y": {"type": "number", "description": f"Vertical, {_XY}."},
+           "target": {"type": "string",
+                      "description": "What you are clicking, in a few words, e.g. 'the Download button', 'the "
+                                     "video titled ...', 'the Save checkbox'. Always give it: a sharper model "
+                                     "aims the click at it, and your x and y are used only when it can't."},
            "button": {"type": "string", "enum": ["left", "right", "middle"]},
            "double": {"type": "boolean", "description": "Double-click."},
            "irreversible": _IRREVERSIBLE},
-          ["x", "y"]),
+          ["x", "y", "target"]),
     _tool("scroll", "Scrolls with the mouse wheel, e.g. down or up a web page. Without x and y it scrolls "
                     "the middle of the screenshot." + _NOTE,
           {"direction": {"type": "string", "enum": ["down", "up"]},
