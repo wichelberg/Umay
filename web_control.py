@@ -347,7 +347,8 @@ def _may_open(url):
 # --- tabs ------------------------------------------------------------------------------------
 
 def _tab(tab_id):
-    return _call("tab", tab=None if tab_id in (None, "") else int(tab_id))
+    """The tab with that id. The 4b sends long ids like "9.82910806e+08": all the digits are there."""
+    return _call("tab", tab=None if tab_id in (None, "") else int(float(tab_id)))
 
 
 def _tab_line(tab):
@@ -483,6 +484,8 @@ YES = {"1", "true", "yes", "on", "x", "✓", "evet", "açık"}
 
 def web_act(action: str, ref: str = "", tab_id: int = None, text: str = "", submit: bool = False,
             path: str = "", url: str = "", fields: object = None, direction: str = "") -> str:
+    ref = str(ref or "").strip(" []")  # a page shows refs as [1], and the 4b copies them that way
+
     def run():
         tab = _tab(tab_id)
         if action == "click":
@@ -586,7 +589,7 @@ def _fields(fields):
                  if isinstance(f, dict)]
     else:
         pairs = []
-    pairs = [(r, t) for r, t in pairs if r]
+    pairs = [(r.strip(" []"), t) for r, t in pairs if r.strip(" []")]  # shown as [1], and copied that way
     if not pairs:
         raise ToolError('Give `fields` as {"<ref>": "<text>", ...} with numbers from web_read_page.')
     return pairs

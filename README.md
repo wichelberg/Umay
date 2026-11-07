@@ -9,7 +9,7 @@ Umay speaks English. Her replies come from a local model on this PC (Qwen 3.5 4B
 | Area | What she can do |
 |---|---|
 | Files | List, search, read, create, write, move and delete (to the Recycle Bin) files in the allowed folders, open them with their default app; tidy Downloads into Images / Documents / Code / ... subfolders with one confirmation (nothing deleted or overwritten) |
-| Apps & games | Find and launch installed apps and Steam games; list open apps and close them (normally or forced); list running processes and end one by PID, like Task Manager |
+| Apps & games | Find and launch installed apps and Steam games, or run an `.exe` by its path (inside the allowed folders), then wait for its window and say what really happened; if Windows asks for administrator rights she tells you, because only you can press Yes. Move an open app's window to another monitor, minimize, maximize, restore or bring it to the front ("move Opera GX to the other monitor", "Spotify'ı küçült"): she reads the window back, so "done" means it happened. List open apps and close them (normally or forced); list running processes and end one by PID, like Task Manager |
 | Browser | Open sites in Opera GX (new tab, or starts Opera), find a site by name via web search, search YouTube and open a result by number |
 | Web control | With the Umay Web Control extension: Opera GX tabs (list, open, close, switch, back / forward / reload, zoom, pin, mute, duplicate, reopen the closed one, a new window), read a page part by part (also inside web components, like Brightspace's), find text on it, scroll, hover, click, type, pick options, tick boxes, fill several fields with one question, download (with Opera's own logins) and upload a file from the PC; search your bookmarks, history and downloads. Reading and moving around aren't asked; typing, buttons, downloads, uploads and closing a tab are asked where you asked from; password / card fields, buttons that send, pay, buy or delete, and account / payment pages are asked with a warning and the whole text. After she reads a page (or search results, or a message) the rest of that request is in strict mode: every question carries a warning, every mouse / keyboard step on the screen asks, and an address she made up herself is asked before it opens. "Find my Quantitative Data Analysis course on Brightspace": she walks the site herself in your Opera (links, menus, its own search; at most 30 pages / 5 minutes), leaves the page in front (and sends a screenshot on Telegram), and stops at a login, a CAPTCHA or a payment page. The video in a tab (loop on/off, its own volume in percent, mute) goes through it too, without asking, and the answer says the video's state; fullscreen is YouTube's own `f` key. If Opera can't run the extension (not loaded, its folder moved, an old copy, not connecting), she tells you on the PC and on Telegram |
 | Media | Play/pause/next via media keys (works for YouTube, Spotify, ...), set the system volume |
@@ -20,6 +20,7 @@ Umay speaks English. Her replies come from a local model on this PC (Qwen 3.5 4B
 | Health | Watches GPU temperature, RAM, CPU load and free disk space; past a limit (see `.env.example`) she warns you with a popup and on Telegram, with buttons to end the program causing it or leave it. Telegram reminders every minute from minute 3; with no answer by minute 10 and the value still bad, she ends that program herself. A full disk is only reported |
 | Reminders | "Remind me at 9 tomorrow…", repeating alarms, turn alarms on/off. A ringing alarm goes to Telegram with Turn off / Snooze 10 min buttons, at once if you're away from the PC (10 min without input), otherwise if it isn't turned off within 2 minutes; after 15 minutes unanswered it goes quiet by itself (the popup stays) |
 | Price alarms | "BTC 80 bini geçerse haber ver", "tell me if Tesla drops below 200", "USD/TL %1 oynarsa söyle": any stock, index, currency, commodity or crypto Yahoo Finance knows, on the markets panel or not. Above / below a price fires once when the price crosses it ("reaches 100k" picks the side from today's price; one set while already past waits for a new cross), a daily move of some percent fires once a day while the market is open. Checked every minute; she tells you aloud or in writing at the PC, on Telegram when you're away. A move far bigger than expected (a % alarm at twice its limit, or the market moving a stock / crypto 15%, an index 6%, a currency 4.5%, a commodity 7.5% in a day) is urgent: away, she calls you on WhatsApp (not in the quiet hours, at most twice a day; then Telegram). "List my price alarms", "remove alarm 2" / "remove the Bitcoin alarm". Stored in `%LOCALAPPDATA%\Umay\price_alerts.json` |
+| Mail | "Write a mail to ali@example.com about...": a draft opens in Outlook in its own window, with the address, subject and text filled in. She never sends: you read it and press Send. If you're away from the PC, a Telegram message says it's waiting. A name without an address gets a question, not a guess |
 | Calendar | "Add these to my plans": the events go into one `.ics` file (each with its own phone alarm) sent on Telegram; tap it on the phone to add them to Outlook. Each one also gets a PC reminder. Only when you ask for your plans/calendar; a plain "set an alarm" stays on the PC. She can read a numbered item of the development plan ("6. maddedeki alarmları planlarıma ekle") and never guesses a time that isn't given |
 | Screen | Take a screenshot to check the result of an action, or send it to you on Telegram. She sees the monitor with the window in front at its full resolution (or the other one, or each of them, when she asks), so small text like a tab's name stays readable |
 | Memory | Every conversation (text box, Telegram, spoken) is kept in `chat_logs`, and `search_memory` searches it. When one is over (15 minutes without a change) the local model calls it important or unimportant ("remember this" is always important; unsure counts as important). Past `UMAY_MEMORY_LIMIT_MB` (100 MB) the unimportant ones are deleted, oldest first; if the important ones alone are still over it, the oldest are summarized one by one, and every date and time in them is kept (the ones a summary leaves out are added under it). Not during a game. Log: `%LOCALAPPDATA%\Umay\memory.log` |
@@ -312,7 +313,7 @@ comments. The most useful ones:
 | `UMAY_USER_NAME` | `You` | Your name in the text box and the chat logs |
 | `UMAY_LLM` | `local` | Where her replies come from: `local` (Ollama, `UMAY_LOCAL_BASE_MODEL` = `qwen3.5:4b`, `UMAY_LOCAL_CONTEXT` = 16384 tokens) or `openrouter` |
 | `OPENROUTER_MODEL` | Gemini Flash | The model Umay talks with on OpenRouter |
-| `UMAY_HEAVY_MODEL` | `claude-code:haiku:low` | The heavy model that plans multi-step requests and aims clicks: Claude Code (`claude-code:<model>:<effort>`) on your subscription, never paid per request; `off` = none. At most `UMAY_HEAVY_MAX_CALLS` (20) calls per request |
+| `UMAY_HEAVY_MODEL` | `claude-code:haiku:low` | The heavy model that plans multi-step requests and aims clicks: Claude Code (`claude-code:<model>:<effort>`) on your subscription, never paid per request; `off` = none. At most `UMAY_HEAVY_MAX_CALLS` (40) calls per request |
 | `UMAY_ALLOWED_DIRS` | Desktop;Downloads;Documents | The only folders she may touch |
 | `CLAUDE_COMM_PATH` | – | Enables Telegram |
 | `UMAY_STT` | `local` | Speech-to-text: `local` (Whisper, falls back to OpenRouter) or `openrouter` |
@@ -357,7 +358,9 @@ comments. The most useful ones:
 - Screenshots are sent to the model only when she uses `look_at_screen` (or after a mouse or keyboard
   step), and dropped from the conversation right after; during a task only the newest one is kept.
 - The heavy model (`UMAY_HEAVY_MODEL`, Claude Code): a click's screenshot goes to it (so it leaves the
-  PC, to Anthropic) and a plan sends it your request and the last few lines of the conversation. It runs
+  PC, to Anthropic), a plan sends it your request and the last few lines of the conversation, and the check
+  after a plan step sends what the tools answered, plus a screenshot of all monitors if the step used the
+  mouse, keyboard or screen. It runs
   with no tools (only Read, for that one screenshot, deleted after), no MCP servers, none of your
   Claude Code settings and no saved session. `off` keeps everything on the PC.
 - Mouse and keyboard: she asks only before a step that sends, posts, buys, deletes or can't be undone
@@ -406,6 +409,8 @@ How the code fits together, how to add a tool, build and deploy, and known traps
 | `pc_tools.py` | Files and app launching (+ confirmation channels) |
 | `browser_tools.py` | Opera GX and YouTube |
 | `system_tools.py` | Closing apps, Python runs, terminal, VS Code, shutdown, PC status |
+| `mail_tools.py` | A mail draft in Outlook (mailto); it never sends |
+| `window_tools.py` | Windows of open apps (move, minimize, maximize, restore, front), starting an app and waiting for its window |
 | `health_monitor.py` | Background health checks, alarms and their escalation |
 | `steam_tools.py` | Installed Steam games |
 | `whatsapp_tools.py` | WhatsApp Desktop: chat list, reading messages (UI Automation), sending files |
@@ -419,7 +424,7 @@ How the code fits together, how to add a tool, build and deploy, and known traps
 | `conversation_memory.py` | Judging finished conversations, deleting / summarizing past the size limit |
 | `eyes.py`, `hands_worker.py`, `hand_gesture.py` | Umay's eyes: starting / stopping the camera, the camera worker (MediaPipe, in hands_env) and what a hand means for the mouse |
 | `input_tools.py` | The mouse and keyboard: click, scroll, type, keys (pointing at the latest screenshot; a click's target aimed by the heavy model) |
-| `heavy_model.py` | The heavy model (`UMAY_HEAVY_MODEL`): Claude Code Haiku on your subscription, for plans and aiming clicks |
+| `heavy_model.py` | The heavy model (`UMAY_HEAVY_MODEL`): Claude Code Haiku on your subscription, for plans, checking their steps and aiming clicks |
 | `task_plan.py` | Plans for multi-step requests: when one is needed, the planner's tool list, each step's tools and prompt |
 | `reminder_tools.py`, `config_loader.py`, `check_event.py`, `alert.py`, `alarm_ring.py` | Alarms and reminders; one ringing alarm on the PC and Telegram |
 | `calendar_tools.py` | Plans to the phone's calendar (.ics on Telegram) + PC reminders |

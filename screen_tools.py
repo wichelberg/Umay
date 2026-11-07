@@ -42,6 +42,7 @@ _user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
 # What the latest screenshot showed (physical px): its part of the screen, the monitor it is on, and
 # how many images it was (clicks need exactly one).
 _view = {"rect": None, "monitor": None, "count": 0}
+DESKTOP_WIDTH = 2000
 
 
 def capture(max_width):
@@ -172,6 +173,11 @@ def refresh(mark=None):
     monitor = _view["monitor"] or _front_and_active()[2]
     _view.update(rect=monitor, monitor=monitor, count=1)
     return _shots([monitor], mark=mark)
+
+
+def desktop_jpeg():
+    """A fresh JPEG of all the monitors side by side, for the heavy model's check of a plan step (plan 26)."""
+    return capture(DESKTOP_WIDTH)
 
 
 def view_jpeg():

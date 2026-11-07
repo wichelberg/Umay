@@ -28,6 +28,7 @@ import heavy_model
 import hud
 import input_tools
 import local_llm
+import mail_tools
 import market_outlook
 import markets_follow
 import media_tools
@@ -46,6 +47,7 @@ import voice_confirm
 import web_control
 import web_find
 import whatsapp_tools
+import window_tools
 
 AI_NAME = "Umay"
 USER_NAME = os.environ.get("UMAY_USER_NAME", "").strip() or "You"
@@ -108,15 +110,20 @@ TOOL_HINTS = (
     "without describing it first; answer only when the task is done or you are stuck. To work on another "
     "monitor (or when asked to move the cursor there), call move_mouse first. To find a page inside a website "
     "(a course, a setting, a product) use web_find_in_site; for Opera GX itself the web_* tools come before "
-    "the mouse and keyboard."
+    "the mouse and keyboard. To move, minimize, maximize or bring forward an app's window use window_control. "
+    "You can't remove anything from the phone calendar: say so, and never add an event instead. For any mail use "
+    "draft_mail, never the mouse: you can't send mail, the user presses Send."
 )
 
 # The small local model, partway through a task on the screen, often answers "Let me click the field..."
 # and stops there (measured 2026-11-02). Such an answer gets GO_ON, at most NUDGES times per request.
 SCREEN_TOOLS = {"look_at_screen", "click", "scroll", "type_text", "press_keys", "move_mouse"}
+WORKING_TOOLS = SCREEN_TOOLS | {"window_control", "list_open_apps"}  # "I'll click it now" after these stops short too
 ANNOUNCES_STEP = re.compile(r"\b(let me|let's|i'll|i will|i'm going to|now i|next,? i)\b", re.IGNORECASE)
 GO_ON = "Go on with the task: call the tool for that step now."
 NUDGES = 3
+CHECK_WAIT_S = 1.0    # before the screenshot for a plan step's check
+RESULT_SHOWN = 900    # of a tool's answer, for that check: at 300 a list of 17 tabs ended before the new one
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
@@ -253,7 +260,7 @@ TOOLS = [
      + screen_tools.TOOLS + input_tools.TOOLS + eyes.TOOLS + face.TOOLS + claude_terminal.TOOLS + calls.TOOLS + media_tools.TOOLS + spotify_tools.TOOLS + reminder_tools.TOOLS + calendar_tools.TOOLS + whatsapp_tools.TOOLS
      + web_control.TOOLS + web_find.TOOLS + sleep_mode.TOOLS + news_follow.TOOLS + markets_follow.TOOLS + market_outlook.TOOLS
      + price_alerts.TOOLS
-     + day_plan.TOOLS)
+     + day_plan.TOOLS + window_tools.TOOLS + mail_tools.TOOLS)
 
 TOOL_FUNCTIONS = {
     "web_search": web_search,
@@ -261,6 +268,8 @@ TOOL_FUNCTIONS = {
     **pc_tools.TOOL_FUNCTIONS,
     **browser_tools.TOOL_FUNCTIONS,
     **system_tools.TOOL_FUNCTIONS,
+    **window_tools.TOOL_FUNCTIONS,
+    **mail_tools.TOOL_FUNCTIONS,
     **steam_tools.TOOL_FUNCTIONS,
     **screen_tools.TOOL_FUNCTIONS,
     **input_tools.TOOL_FUNCTIONS,
@@ -556,6 +565,7 @@ def _send_message(chat, user_text, source="other"):
     messages = chat["messages"]
     messages.append({"role": "user", "content": user_text})
     pc_tools.new_request()  # strict mode (plan 20b) starts over: nothing untrusted read yet
+    window_tools.new_request()
     look = eyes.command(user_text, max_words=6)
     if look:  # "eyes on / off": no model needed, and the small one might not call it right
         answer = eyes.switch(look)
@@ -575,6 +585,11 @@ def _send_message(chat, user_text, source="other"):
         input_tools.new_turn()
         _, answer = input_tools.move_to_monitor(monitor)
         answer = answer.rstrip(".") + ", dear."
+        messages.append({"role": "assistant", "content": answer})
+        return answer
+    answer = window_tools.shortcut(user_text)
+    if answer is not None:  # "move Opera GX to the other monitor", "run Documents\x\setup.exe": the same
+        credit_log.note_tool("window_control")
         messages.append({"role": "assistant", "content": answer})
         return answer
     alarm = price_alerts.asked(user_text)
@@ -599,6 +614,10 @@ def _send_message(chat, user_text, source="other"):
         return answer
     # Shadow only (router.py): what layer 1 would have done is logged next to what the model does; nothing runs.
     route = router.route(user_text)
+    note = window_tools.open_app_note(user_text)
+    if note:  # "in the Umay Test App ...": the 4b made up a website for it (2026-11-06)
+        user_text += note
+        messages[-1]["content"] = user_text
     called, started, answer = [], time.monotonic(), ""
     input_tools.new_turn()
     heavy_model.new_request()  # its call budget (plan 21) starts over
@@ -629,12 +648,16 @@ def _tool_loop(mode, messages, rounds, called, run, tools=None):
     `rounds` ran out. `tools`: the tool schemas it may use (all by default); a call to any other is refused.
     Appends to `messages` and `called` in place and adds the cost to run["cost"]."""
     allowed = None if tools is None else {t["function"]["name"] for t in tools}
-    on_screen, nudges = False, 0
+    on_screen, nudges, compacted = False, 0, False
     for _ in range(rounds):
         content, tool_calls, round_cost = _request_fitting(mode, messages, tools)
         run["cost"] += round_cost
 
         if not tool_calls:
+            # A full context gives an empty answer, not an error (16,352 of 16,384 tokens, twice on 2026-11-06).
+            if not (content or "").strip() and not compacted and _compact(mode, messages):
+                compacted = True
+                continue
             messages.append({"role": "assistant", "content": content})
             if on_screen and nudges < NUDGES and ANNOUNCES_STEP.search(content[-200:]):
                 nudges += 1
@@ -645,7 +668,7 @@ def _tool_loop(mode, messages, rounds, called, run, tools=None):
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         images = []
         names = {tc["function"]["name"] for tc in tool_calls}
-        on_screen = on_screen or bool(names & SCREEN_TOOLS)
+        on_screen = on_screen or bool(names & WORKING_TOOLS)
         hud.activity("research" if names & RESEARCH_TOOLS else "work")
         for tc in tool_calls:
             fn_info = tc["function"]
@@ -711,7 +734,7 @@ def _what_was_done(messages):
             lines += [f"called {tc['function']['name']}({tc['function'].get('arguments') or ''})"[:300]
                       for tc in m["tool_calls"]]
         elif m["role"] == "tool":
-            lines.append(f"  -> {str(m.get('content'))[:300]}")
+            lines.append(f"  -> {str(m.get('content'))[:RESULT_SHOWN]}")
     return "\n".join(lines[-16:])
 
 
@@ -724,8 +747,8 @@ def _planned(chat, user_text, source, called, run):
     pending = chat.pop("pending_plan", None)
     if not heavy_model.on():
         return None
-    if pending:
-        request = f"{pending}\n(The owner's answer to my questions: {user_text})"
+    if pending and not task_plan.NOT_A_REPLY.match(user_text.strip()):
+        request = f"{pending}\n{task_plan.ANSWER_MARK} {user_text})"
     elif task_plan.needs_plan(user_text, ask_plain):
         request = user_text
     else:
@@ -733,21 +756,40 @@ def _planned(chat, user_text, source, called, run):
     hud.activity("think")
     plan = task_plan.make(request, _recent_text(chat), TOOLS, f"{datetime.now():%Y-%m-%d %A %H:%M}")
     if plan is None:
+        task_plan.note("no plan", request=request)
         return None
+    task_plan.note("plan", request=request, source=source, steps=plan["steps"], ask_user=plan["ask_user"])
     if plan["ask_user"]:
-        chat["pending_plan"] = request
+        if task_plan.waiting_on_reply(request):
+            chat["pending_plan"] = request
         return i18n.get(_language, "plan_questions", questions="\n".join(f"- {q}" for q in plan["ask_user"]))
     _show(source, i18n.get(_language, "plan_shown", count=len(plan["steps"]),
                            steps=task_plan.plan_text(plan["steps"])))
     return _run_plan(request, plan["steps"], called, run)
 
 
+def _checked(request, step, answer, messages, calls):
+    """Did this step really happen? (True / False / None for "can't tell", why). Only a step that changed
+    something is checked, and the screen goes along only when the step worked on the screen."""
+    if not task_plan.needs_check(calls):
+        return True, ""
+    image = None
+    if {name for name, _ in calls} & SCREEN_TOOLS:
+        time.sleep(CHECK_WAIT_S)  # what a key or a click started has to reach the screen
+        try:
+            image = screen_tools.desktop_jpeg()
+        except OSError:
+            image = None
+    return task_plan.verify(request, step, answer, _what_was_done(messages), image)
+
+
 def _run_plan(request, steps, called, run):
-    """Each step in a fresh conversation with only its tools (task_plan.step_tools). A step that fails gets one
-    new attempt written by the heavy model; if that fails too, or it gives up, the plan stops there."""
+    """Each step in a fresh conversation with only its tools (task_plan.step_tools). A step that changed something
+    is then checked (_checked): the 4b's "done" isn't enough. A step that fails or doesn't pass gets one new attempt
+    written by the heavy model; if that fails too, or it gives up, the plan stops there."""
     mode = MODES["umay"]
     names = [t["function"]["name"] for t in TOOLS]
-    results, retried, answer = [], set(), ""
+    results, retried, answer, unchecked = [], set(), "", 0
     i = 0
     while i < len(steps):
         allowed = task_plan.step_tools(steps[i], names, last=i == len(steps) - 1)
@@ -760,19 +802,29 @@ def _run_plan(request, steps, called, run):
             answer = _tool_loop(mode, messages, STEP_ROUNDS, called, run, tools)
             if task_plan.skipped(steps[i], called[before:]):
                 answer = ""  # still nothing done: a failed step
-        if task_plan.failed(answer):
-            new, why = (None, None) if i in retried else task_plan.fix(
-                request, steps, i, results, answer or _what_was_done(messages), TOOLS)
+        verdict, why = None, ""
+        problem = (answer or "") if task_plan.failed(answer) else None  # no answer at all is a failed step too
+        if problem is None:
+            verdict, why = _checked(request, steps[i], answer, messages, called[before:])
+            if verdict is False:
+                problem = why or i18n.get(_language, "plan_no_answer")
+        task_plan.note("step", number=i + 1, do=steps[i]["do"], tools=[name for name, _ in called[before:]],
+                       answer=answer or "", verdict=verdict, why=why, failed=problem is not None)
+        if problem is not None:
+            new, gave_up = (None, None) if i in retried else task_plan.fix(
+                request, steps, i, results, f"{problem}\n{_what_was_done(messages)}".strip(), TOOLS)
             if new is None:
+                task_plan.note("stopped", number=i + 1, why=gave_up or problem)
                 return i18n.get(_language, "plan_stopped", step=i + 1, count=len(steps),
-                                why=why or answer or i18n.get(_language, "plan_no_answer"),
+                                why=gave_up or problem or i18n.get(_language, "plan_no_answer"),
                                 done=task_plan.results_text(results))
             retried.add(i)
             steps = steps[:i] + [new] + steps[i + 1:]
             continue
-        results.append(task_plan.short(answer))
+        unchecked += verdict is None
+        results.append(task_plan.short(answer) + (" (not checked)" if verdict is None else ""))
         i += 1
-    return answer
+    return f"{answer}\n{i18n.get(_language, 'plan_unchecked', count=unchecked)}" if unchecked else answer
 
 
 # --- OpenRouter credits ---------------------------------------------------------------

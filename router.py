@@ -46,6 +46,8 @@ CATEGORIES = {
     "app_launch": (["find_applications", "launch_application"],
                    "v:open v:launch v:start v:run app application program game"),
     "app_close": (["close_app", "list_open_apps"], "v:close v:quit v:exit app application window"),
+    "app_window": (["window_control"], "v:move v:minimize v:maximize v:restore window monitor"),
+    "mail": (["draft_mail"], "mail email e-mail outlook v:write v:draft"),
     "processes": (["list_processes", "end_process"], "process processes v:kill v:end task_manager"),
     "files": (["open_path", "list_directory", "search_files", "read_file", "create_folder", "write_file", "move_path",
                "delete_path", "organize_downloads"],

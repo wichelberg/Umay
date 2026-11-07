@@ -52,6 +52,8 @@ AFTER_S = 0.8            # after an action, before the screenshot: the screen re
 TAKEN_OVER_PX = 12       # the pointer this far from where she left it: the user moved the mouse
 MAX_SCROLL = 30
 MAX_TEXT = 2000
+AFTER_REPLACE_S = 0.1
+SAME_SPOT_PX = 12        # a second click this close to a first one, in one request, is the same click
 UIA_TIMEOUT_S = 3
 UIA_NAMES = {50000: "button", 50002: "checkbox", 50003: "combobox", 50004: "text field", 50005: "link",
              50006: "image", 50007: "list item", 50008: "list", 50011: "menu item", 50013: "radio button",
@@ -84,7 +86,7 @@ _uia = {"thread": None, "jobs": queue.Queue()}
 
 def new_turn():
     """A new request from the user: forget the last one's steps and a takeover."""
-    _turn.update(cursor=None, stopped=False, focused=False, steps=[])
+    _turn.update(cursor=None, stopped=False, focused=False, steps=[], clicked=[])
 
 
 def _uia_loop():
@@ -203,6 +205,11 @@ def _umay_has_focus():
     return pid.value == os.getpid()
 
 
+def clicked_before(at, button, earlier):
+    """This button of the mouse already hit something at this spot in this request."""
+    return any(which == button and max(abs(x - at[0]), abs(y - at[1])) <= SAME_SPOT_PX for x, y, which in earlier)
+
+
 def _stopped():
     """Why not, if the user took over the mouse; else None."""
     if _turn["stopped"] or taken_over(_turn["cursor"], _cursor()):
@@ -282,6 +289,7 @@ def click(x: float, y: float, button: str = "left", double: bool = False, irreve
           target: str = "") -> object:
     with _lock:
         target = str(target or "").strip()
+        double = double or str(button).lower() == "double"  # how the 4b asks for it, every time (2026-11-06)
         aimed = aim(target) if target and screen_tools.to_screen(x, y) is not None else None
         if aimed == MISSING:
             return (f'A closer look found no {target} on the latest screenshot, so nothing was clicked. Take a new '
@@ -294,15 +302,21 @@ def click(x: float, y: float, button: str = "left", double: bool = False, irreve
         why = _stopped()
         if why:
             return why
+        which = {"right": Button.right, "middle": Button.middle}.get(str(button).lower(), Button.left)
+        if clicked_before(at, which, _turn.setdefault("clicked", [])):
+            # A button that shows nothing got 11 clicks from the 4b (2026-11-06): on a real Send that's 11 mails.
+            return ("Not clicked: you already clicked that spot in this request and it hit something. A button "
+                    "often shows no change. Never click it again: go on, or tell the user what you did.")
         _move(*at)
         hit = what_is_at(*at)
         verb = "double-click" if double else "click"
         why = _allowed(irreversible, f'{verb} {hit[0]} "{hit[1]}"' if hit and hit[1] else f"{verb} at ({x:.0f}, {y:.0f})")
         if why:
             return why
-        which = {"right": Button.right, "middle": Button.middle}.get(str(button).lower(), Button.left)
         _mouse.click(which, 2 if double else 1)
         _turn["focused"] = True
+        if not missed(hit):
+            _turn["clicked"].append((*at, which))
         verb = "double-clicked" if double else "clicked"
         if missed(hit):
             step = f"{verb} the background at ({x:.0f}, {y:.0f}): MISSED"
@@ -326,7 +340,7 @@ def scroll(direction: str = "down", amount: int = 5, x: float = None, y: float =
         return _done(f"Scrolled {way} {steps} notches.", f"scrolled {way} {steps}")
 
 
-def type_text(text: str, enter: bool = False, irreversible: str = "") -> object:
+def type_text(text: str, enter: bool = False, irreversible: str = "", replace: bool = False) -> object:
     with _lock:
         if not text and not enter:
             return "Nothing to type."
@@ -337,6 +351,12 @@ def type_text(text: str, enter: bool = False, irreversible: str = "") -> object:
         why = _start(irreversible, f'type "{text}"' + (" + Enter" if enter else ""))
         if why:
             return why
+        if replace:  # a field typed into twice held both tries, mixed up (2026-11-06)
+            _keyboard.press(Key.ctrl)
+            _keyboard.press("a")
+            _keyboard.release("a")
+            _keyboard.release(Key.ctrl)
+            time.sleep(AFTER_REPLACE_S)
         _keyboard.type(text)
         if enter:
             _keyboard.press(Key.enter)
@@ -492,6 +512,8 @@ TOOLS = [
           ["direction"]),
     _tool("type_text", "Types text with the keyboard where the focus is (click the field first)." + _NOTE,
           {"text": {"type": "string"}, "enter": {"type": "boolean", "description": "Press Enter after it."},
+           "replace": {"type": "boolean", "description": "Select what's in the field first, so the text replaces "
+                                                         "it. Use it when filling in a form field."},
            "irreversible": _IRREVERSIBLE},
           ["text"]),
     _tool("press_keys", "Presses a key or a key combination, e.g. enter, esc, ctrl+l, ctrl+shift+t, alt+tab, "

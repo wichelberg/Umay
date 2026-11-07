@@ -227,7 +227,9 @@ TOOLS = [
         "'6. maddedeki alarmları planlarıma ekle'). A plain 'alarm kur' or 'hatırlatıcı kur' is add_reminder "
         "(PC only), never this. Every start needs a date and time the owner gave or that's written in the plan; "
         "if one is missing or unclear, ask instead of guessing, and add the rest. Afterwards tell the owner "
-        "what was added and when, and that it's in the calendar once they tap the file on Telegram.",
+        "what was added and when, and that it's in the calendar once they tap the file on Telegram. It can only "
+        "add: nothing can remove an event from the phone calendar, so if asked to, tell the owner to delete it "
+        "there themselves and don't call this.",
         {"events": {"type": "array", "items": _EVENT}},
         ["events"],
     ),

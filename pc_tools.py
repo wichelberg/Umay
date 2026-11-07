@@ -414,9 +414,15 @@ def _installed_apps():
 
 
 def find_applications(name: str) -> str:
+    import window_tools  # imports system_tools, which imports this module
+
     query = _normalize(name)
     if not query:
         return "Give an app name to search for."
+    opened = window_tools.open_app(name)  # "not installed" sent the 4b away from an app that was on the screen
+    if opened:
+        return (f"{opened} is already open, so there's nothing to launch. window_control brings it to the front, "
+                "then look_at_screen shows it.")
     scored = []
     for app_id, app_name in _installed_apps().items():
         candidate = _normalize(app_name)
@@ -432,21 +438,54 @@ def find_applications(name: str) -> str:
     return "\n".join(f"- {app_name} | app_id: {app_id}" for _, app_name, app_id in scored[:8])
 
 
-def launch_application(app_id: str) -> str:
-    apps = _installed_apps()
-    if app_id not in apps:
-        return "Unknown app_id. Call find_applications first and use an app_id from its results."
-    name = apps[app_id]
-    if not confirm("confirm_launch", name=name):
-        return _declined()
+def _exe_file(text):
+    """The program a path means, or None if `text` isn't an .exe path. "Documents\\x.exe" is under the home folder,
+    and a name typed or heard with stray spaces ("rustdesk-1.5. 1-x86_64.exe") still finds its file."""
+    text = text.strip().strip('"')
+    if not text.lower().endswith(".exe"):
+        return None
+    path = Path(text) if Path(text).is_absolute() else Path.home() / text
+    if not path.exists() and path.parent.is_dir():
+        wanted = _normalize(path.name)
+        path = next((f for f in path.parent.glob("*.exe") if _normalize(f.name) == wanted), path)
+    path = _resolve(str(path))
+    if not path.is_file():
+        raise ToolError(f"Doesn't exist: {path}")
+    return path
+
+
+def _steam_folder(app_id):
+    """The folder a Steam game runs from, or None."""
+    import steam_tools  # imports pc_tools itself
+
+    appid = app_id.rsplit("/", 1)[-1]
     try:
+        game = next((g for g in steam_tools.installed_games() if g["appid"] == appid), None)
+    except steam_tools.ToolError:
+        return None
+    return game["library"] / "steamapps" / "common" / game["installdir"] if game and game["installdir"] else None
+
+
+def launch_application(app_id: str) -> str:
+    def run():
+        import window_tools  # imports system_tools, which imports this module
+
+        exe = _exe_file(app_id)
+        apps = {} if exe else _installed_apps()
+        if not exe and app_id not in apps:
+            return ("Unknown app_id. Call find_applications first and use an app_id from its results, or give the "
+                    "full path of an .exe file.")
+        name = exe.stem if exe else apps[app_id]
+        if not confirm("confirm_launch", name=exe.name if exe else name):
+            return _declined()
+        if exe:
+            return window_tools.start_and_wait(name, lambda: os.startfile(str(exe), cwd=str(exe.parent)), exe.parent)
         if "://" in app_id:
-            os.startfile(app_id)
-        else:
-            subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app_id}"])
-    except OSError as e:
-        return f"Failed to launch {name}: {e}"
-    return f"Launched {name}."
+            folder = _steam_folder(app_id) if app_id.startswith("steam://") else None
+            return window_tools.start_and_wait(name, lambda: os.startfile(app_id), folder)
+        return window_tools.start_and_wait(
+            name, lambda: subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app_id}"]))
+    return _run(run)
 
 
 # --- Tool schemas ------------------------------------------------------------
@@ -548,8 +587,10 @@ TOOLS = [
     ),
     _tool(
         "launch_application",
-        "Launches an installed app or game. Only use an app_id returned by find_applications." + _CONFIRM_NOTE,
-        {"app_id": {"type": "string", "description": "The app_id from find_applications results."}},
+        "Launches an installed app or game, or runs an .exe file, and waits for its window. Its answer says what "
+        "really happened: report that, not 'done'." + _PATH_NOTE + _CONFIRM_NOTE,
+        {"app_id": {"type": "string", "description": "The app_id from find_applications results, or the full path "
+                                                     "of an .exe file."}},
         ["app_id"],
     ),
 ]

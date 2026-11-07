@@ -15,7 +15,8 @@ One setting, UMAY_HEAVY_MODEL:
 
 Each call runs claude with no tools at all, or only Read when it has to see a screenshot (written to its own
 folder, %LOCALAPPDATA%\\Umay\\heavy, and deleted after), a short system prompt of ours, no MCP servers, no
-user settings and no saved session. At most UMAY_HEAVY_MAX_CALLS (20) calls per request: after that, or when
+user settings, no saved session and --safe-mode: without it claude still read the owner's global CLAUDE.md, and
+plans told Umay to ask about "another development plan" (2026-11-06). At most UMAY_HEAVY_MAX_CALLS (40) calls per request: after that, or when
 claude is missing, offline or fails, ask() returns None and the caller does without it.
 Every call is logged to %LOCALAPPDATA%\\Umay\\heavy_model.log with its time, list price and the plan usage
 Claude Code reports (5-hour and weekly window).
@@ -32,7 +33,7 @@ from pathlib import Path
 import claude_bridge
 
 DEFAULT = "claude-code:haiku:low"
-MAX_CALLS = 20
+MAX_CALLS = 40  # a plan, a check per step and an aim per click: a three-field mail used up 20 (2026-11-06)
 TIMEOUT_S = 120
 SYSTEM = ("You are a careful helper for Umay, a desktop assistant on a Windows PC. Answer exactly what you are "
           "asked, in the JSON form asked for, and nothing else.")
@@ -79,7 +80,7 @@ def command(exe, prompt, model, effort, system_file, schema=None, read=False):
     the tool list, is ~12,000 characters and Windows command lines end at 32,767)."""
     cmd = [exe, "-p", prompt, "--model", model, "--effort", effort, "--tools", "Read" if read else "",
            "--system-prompt-file", str(system_file), "--strict-mcp-config", "--no-session-persistence",
-           "--setting-sources", "project", "--output-format", "stream-json", "--verbose"]
+           "--safe-mode", "--setting-sources", "project", "--output-format", "stream-json", "--verbose"]
     if schema is not None:
         cmd += ["--json-schema", json.dumps(schema)]
     return cmd
